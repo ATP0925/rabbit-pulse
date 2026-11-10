@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+.rabbitpulse/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.coverage
