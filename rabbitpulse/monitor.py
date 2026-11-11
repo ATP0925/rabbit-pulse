@@ -10,6 +10,12 @@ from rabbitpulse.notifier import notify_desktop, send_webhook
 
 LOCK_PORT = 49159
 
+class _FlushFileHandler(logging.FileHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+
 class MonitorEngine:
     def __init__(self):
         self.config = load_config()
@@ -21,7 +27,7 @@ class MonitorEngine:
         self.logger = logging.getLogger("RabbitPulse")
         self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
-            handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+            handler = _FlushFileHandler(LOG_FILE, encoding="utf-8")
             formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
@@ -107,3 +113,4 @@ class MonitorEngine:
         self.state["status"] = "stopped"
         save_state(self.state)
         self.logger.info("RabbitPulse Engine stopped.")
+

@@ -16,26 +16,29 @@ def notify_desktop(title: str, message: str):
         print(f"[Notifier Warning] Desktop notification failed: {e}", file=sys.stderr)
 
 def _notify_windows(title: str, message: str):
+    safe_title = title.replace("'", "''")
+    safe_msg = message.replace("'", "''")
     ps_cmd = f"""
     try {{
         [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
         $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
         $toastXml = [xml]$template.GetXml()
-        $toastXml.GetElementsByTagName('text')[0].AppendChild($toastXml.CreateTextNode('{title}')) | Out-Null
-        $toastXml.GetElementsByTagName('text')[1].AppendChild($toastXml.CreateTextNode('{message}')) | Out-Null
+        $toastXml.GetElementsByTagName('text')[0].AppendChild($toastXml.CreateTextNode('{safe_title}')) | Out-Null
+        $toastXml.GetElementsByTagName('text')[1].AppendChild($toastXml.CreateTextNode('{safe_msg}')) | Out-Null
         $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
         $xml.LoadXml($toastXml.OuterXml)
         $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('RabbitPulse').Show($toast)
     }} catch {{
         $wshell = New-Object -ComObject Wscript.Shell
-        $wshell.Popup('{message}', 5, '{title}', 64) | Out-Null
+        $wshell.Popup('{safe_msg}', 5, '{safe_title}', 64) | Out-Null
     }}
     """
     subprocess.Popen(
         ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.DEVNULL,
+        creationflags=0x08000000
     )
 
 def _notify_macos(title: str, message: str):
@@ -79,3 +82,4 @@ def send_webhook(webhook_url: str, title: str, message: str):
         urllib.request.urlopen(req, timeout=5)
     except Exception as e:
         print(f"[Notifier Warning] Webhook dispatch failed: {e}", file=sys.stderr)
+

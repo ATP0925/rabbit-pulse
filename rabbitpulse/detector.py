@@ -1,18 +1,29 @@
+import sys
+import os
 import json
 import shutil
 import subprocess
 from typing import List, Dict, Set, Tuple
 
+def _subprocess_kwargs():
+    kwargs = {}
+    if sys.platform.startswith("win"):
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    return kwargs
+
 def get_gh_executable() -> str:
     which_gh = shutil.which("gh")
     if which_gh:
         return which_gh
+    fallback = r"C:\Program Files\GitHub CLI\gh.exe"
+    if os.path.exists(fallback):
+        return fallback
     return "gh"
 
 class CodeRabbitDetector:
     def __init__(self, github_user: str, watched_repos: List[str] = None):
         self.github_user = github_user
-        self.watched_repos = watched_repos or []
+        self.watched_repos = list(watched_repos) if watched_repos else []
         self.gh_cmd = get_gh_executable()
 
     def scan_all(self, seen_ids: Set[str]) -> Tuple[List[Dict], Set[str]]:
@@ -28,7 +39,7 @@ class CodeRabbitDetector:
             issue_findings, new_seen = self._scan_issues(new_seen)
             findings.extend(issue_findings)
 
-        # 3. Check open PR review comments
+        # 3. Check open PR review comments (owned repos + authored external PRs)
         pr_findings, new_seen = self._scan_prs(new_seen)
         findings.extend(pr_findings)
 
@@ -41,7 +52,8 @@ class CodeRabbitDetector:
                 [self.gh_cmd, "api", "notifications"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                **_subprocess_kwargs()
             )
             if res.returncode == 0 and res.stdout:
                 notifications = json.loads(res.stdout)
@@ -70,7 +82,6 @@ class CodeRabbitDetector:
     def _scan_issues(self, seen_ids: Set[str]) -> Tuple[List[Dict], Set[str]]:
         findings = []
         try:
-            # Check issues mentioning or created by coderabbit
             res = subprocess.run(
                 [
                     self.gh_cmd, "search", "issues",
@@ -80,7 +91,8 @@ class CodeRabbitDetector:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=12
+                timeout=12,
+                **_subprocess_kwargs()
             )
             if res.returncode == 0 and res.stdout:
                 issues = json.loads(res.stdout)
@@ -108,69 +120,77 @@ class CodeRabbitDetector:
 
     def _scan_prs(self, seen_ids: Set[str]) -> Tuple[List[Dict], Set[str]]:
         findings = []
-        # If specific repos are specified, check them, or query open PRs authored by/on user repos
-        repos_to_check = self.watched_repos
-        if not repos_to_check and self.github_user:
-            try:
-                res = subprocess.run(
-                    [
-                        self.gh_cmd, "search", "prs",
-                        "--owner", self.github_user,
-                        "--state", "open",
-                        "--json", "number,repository"
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                if res.returncode == 0 and res.stdout:
-                    prs_data = json.loads(res.stdout)
-                    for item in prs_data:
-                        repo_name = item.get("repository", {}).get("nameWithOwner")
-                        if repo_name and repo_name not in repos_to_check:
-                            repos_to_check.append(repo_name)
-            except Exception:
-                pass
+        pr_targets = []  # List of (repo_full, pr_num)
 
-        for repo in repos_to_check[:5]:  # Limit to 5 active repos to ensure fast response
-            try:
-                # Query PR comments
-                c_res = subprocess.run(
-                    [self.gh_cmd, "pr", "list", "--repo", repo, "--state", "open", "--json", "number"],
-                    capture_output=True,
-                    text=True,
-                    timeout=8
-                )
-                if c_res.returncode == 0 and c_res.stdout:
-                    pr_list = json.loads(c_res.stdout)
-                    for pr in pr_list:
-                        pr_num = str(pr.get("number"))
-                        # Fetch reviews
-                        r_res = subprocess.run(
-                            [self.gh_cmd, "api", f"repos/{repo}/pulls/{pr_num}/comments"],
-                            capture_output=True,
-                            text=True,
-                            timeout=8
-                        )
-                        if r_res.returncode == 0 and r_res.stdout:
-                            comments = json.loads(r_res.stdout)
-                            for c in comments:
-                                c_id = str(c.get("id"))
-                                user = c.get("user", {}).get("login", "").lower()
-                                if "coderabbit" in user:
-                                    key = f"pr_comment:{repo}:{pr_num}:{c_id}"
-                                    if key not in seen_ids:
-                                        seen_ids.add(key)
-                                        body = c.get("body", "").strip().replace("\n", " ")[:120]
-                                        findings.append({
-                                            "type": "PR REVIEW 🐰",
-                                            "repo": repo,
-                                            "id": f"PR #{pr_num}",
-                                            "title": f"Review comment on line {c.get('line')}",
-                                            "summary": f"{repo} PR #{pr_num}: {body}",
-                                            "url": c.get("html_url")
-                                        })
-            except Exception:
-                pass
+        if self.watched_repos:
+            for repo in self.watched_repos[:5]:
+                try:
+                    c_res = subprocess.run(
+                        [self.gh_cmd, "pr", "list", "--repo", repo, "--state", "open", "--json", "number"],
+                        capture_output=True,
+                        text=True,
+                        timeout=8,
+                        **_subprocess_kwargs()
+                    )
+                    if c_res.returncode == 0 and c_res.stdout:
+                        for pr in json.loads(c_res.stdout):
+                            pr_targets.append((repo, str(pr.get("number"))))
+                except Exception:
+                    pass
+        elif self.github_user:
+            # Query open PRs owned by user AND open PRs authored by user on external repos
+            for flag in ["--owner", "--author"]:
+                try:
+                    res = subprocess.run(
+                        [
+                            self.gh_cmd, "search", "prs",
+                            flag, self.github_user,
+                            "--state", "open",
+                            "--json", "number,repository"
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        **_subprocess_kwargs()
+                    )
+                    if res.returncode == 0 and res.stdout:
+                        for item in json.loads(res.stdout):
+                            repo_name = item.get("repository", {}).get("nameWithOwner")
+                            pr_num = str(item.get("number"))
+                            if repo_name and (repo_name, pr_num) not in pr_targets:
+                                pr_targets.append((repo_name, pr_num))
+                except Exception:
+                    pass
+
+        for repo, pr_num in pr_targets[:10]:
+            for endpoint in [f"repos/{repo}/pulls/{pr_num}/comments", f"repos/{repo}/issues/{pr_num}/comments"]:
+                try:
+                    r_res = subprocess.run(
+                        [self.gh_cmd, "api", endpoint],
+                        capture_output=True,
+                        text=True,
+                        timeout=8,
+                        **_subprocess_kwargs()
+                    )
+                    if r_res.returncode == 0 and r_res.stdout:
+                        comments = json.loads(r_res.stdout)
+                        for c in comments:
+                            c_id = str(c.get("id"))
+                            user = c.get("user", {}).get("login", "").lower()
+                            if "coderabbit" in user:
+                                key = f"pr_comment:{repo}:{pr_num}:{c_id}"
+                                if key not in seen_ids:
+                                    seen_ids.add(key)
+                                    body = c.get("body", "").strip().replace("\n", " ")[:120]
+                                    findings.append({
+                                        "type": "PR REVIEW 🐰",
+                                        "repo": repo,
+                                        "id": f"PR #{pr_num}",
+                                        "title": f"CodeRabbit feedback on {repo} #{pr_num}",
+                                        "summary": f"{repo} PR #{pr_num}: {body}",
+                                        "url": c.get("html_url")
+                                    })
+                except Exception:
+                    pass
 
         return findings, seen_ids
