@@ -1,111 +1,121 @@
-# RabbitPulse 🐰
+# RabbitPulse
 
-An adaptive, cross-platform background sentinel that watches your GitHub repositories for CodeRabbit reviews, inline findings, and repo issues.
+RabbitPulse is a small background watcher that keeps an eye on CodeRabbit activity across your GitHub repositories and, optionally, your email inbox.
 
-Instead of keeping browser tabs open or constantly refreshing your inbox, RabbitPulse checks GitHub quietly in the background and pops native desktop notifications the moment CodeRabbit leaves a review or reports an issue.
-
----
-
-## Highlights
-
-- **Dynamic Backoff ($n+1$ Adaptive Polling):** Starts checking every 3 minutes. If no new review is detected, it gently expands the interval ($3 \to 4 \to 5 \to 6$ minutes) to save bandwidth and rate limits. The moment a new comment or issue lands, it resets back to 3 minutes.
-- **Issues & PR Coverage:** Watches for both Pull Request reviews and standalone repository issues created or commented on by CodeRabbit.
-- **Native OS Alerts:** Fires native desktop notifications across Windows (Action Center toasts), macOS (Notification Center), and Linux (`notify-send`).
-- **Webhook Integration:** Optionally routes alerts directly to a Discord or Slack channel.
-- **Auto-Detects GitHub User:** Connects directly through your authenticated `gh` CLI session with zero credential setup needed.
-- **Auto-Start On Boot:** Can automatically launch quietly when your system logs in.
+Instead of leaving browser tabs open or polling at a fixed rate when nothing is happening, RabbitPulse checks every 3 minutes at first and gradually backs off (`3 -> 4 -> 5 ...` up to 60 minutes) during quiet periods. As soon as a new CodeRabbit comment, actionable PR review, repo issue, or inbox alert shows up, it pops a notification and resets back to 3 minutes.
 
 ---
 
-## Quickstart
+## What It Watches
 
-### Prerequisites
-Make sure you have [GitHub CLI](https://cli.github.com/) installed and logged in:
+- **Pull request reviews & comments:** Checks inline review comments, PR conversation comments, and top-level review statuses across your repositories and any external PRs you opened. Comments already marked `Addressed in commit` and zero-action summary reviews are recorded quietly without nagging you.
+- **Repository issues:** Watches for new issues opened by CodeRabbit as well as open issues where CodeRabbit left a comment.
+- **GitHub notifications:** Catches live CodeRabbit notification entries from your GitHub notification feed.
+- **Email inbox (optional IMAP):** Connects read-only over IMAP (`imap.gmail.com` by default) to catch unread CodeRabbit email alerts without changing message read flags.
+- **Desktop & webhook delivery:** Sends native Windows toast alerts, macOS banners, Linux `notify-send` alerts, and optional Discord or Slack webhooks.
+
+---
+
+## Setup
+
+### Requirements
+
+Install [GitHub CLI](https://cli.github.com/) and make sure you are signed in:
+
 ```bash
 gh auth status
 ```
 
-### Installation
-Clone and install locally in editable mode:
+### Install
+
 ```bash
 git clone https://github.com/ATP0925/rabbit-pulse.git
 cd rabbit-pulse
 pip install -e .
 ```
 
+Everything runs on Python's standard library (`3.8+`), with no third-party runtime packages required.
+
 ---
 
-## Usage
+## Commands
 
-### 1. Check Service Status
 ```bash
+# Check daemon status, current interval, email monitor state, and last error
 rabbitpulse status
-```
-Displays your current polling interval, monitored account, and last check timestamp.
 
-### 2. Start Monitoring
-Run in foreground:
-```bash
+# Run one immediate check without starting the background loop
+rabbitpulse scan
+
+# Include previously seen open items during a manual scan
+rabbitpulse scan --all
+
+# Start in the foreground or detached in the background
 rabbitpulse start
-```
-Or start detached in the background:
-```bash
 rabbitpulse start --daemon
-```
 
-### 3. Stop the Daemon
-```bash
+# Stop the running background process
 rabbitpulse stop
-```
 
-### 4. Send a Test Notification
-Verify that your operating system's notification delivery is working:
-```bash
+# Send a test toast / webhook notification
 rabbitpulse test-notify
 ```
 
-### 5. Setup Auto-Start on System Boot
-On Windows, you can install the background launcher into your Startup folder:
+### Windows Auto-Start
+
+Install or remove the hidden Startup launcher (`RabbitPulse.vbs`):
+
 ```bash
 rabbitpulse autostart install
-```
-To remove it later:
-```bash
 rabbitpulse autostart remove
 ```
+
+Or run `scripts\install_autostart.bat` / `scripts\uninstall_autostart.bat`.
 
 ---
 
 ## Configuration
 
-Settings are saved in `~/.rabbitpulse/config.json`. You can inspect or modify them using the CLI:
+Settings live in `~/.rabbitpulse/config.json` and can be updated from the CLI:
 
 ```bash
-# View active configuration
+# Print current configuration (email_password is masked)
 rabbitpulse config
 
-# Set custom base interval (e.g. 5 minutes)
-rabbitpulse config base_interval_minutes 5
+# Change initial polling interval or backoff limits
+rabbitpulse config base_interval_minutes 3
+rabbitpulse config backoff_step_minutes 1
+rabbitpulse config max_interval_minutes 60
 
-# Connect a Discord or Slack webhook for mobile alerts
-rabbitpulse config webhook_url "https://discord.com/api/webhooks/your/webhook"
-
-# Focus on specific repositories only
+# Watch specific repositories only (pass "" to watch all owned repos again)
 rabbitpulse config watched_repos "owner/repo1,owner/repo2"
+rabbitpulse config watched_repos ""
+
+# Connect a Discord or Slack webhook
+rabbitpulse config webhook_url "https://discord.com/api/webhooks/your/webhook"
 ```
+
+### Optional Email Monitoring (Gmail / IMAP)
+
+Read-only IMAP polling is disabled by default. To turn it on with Gmail (using a Google App Password stored in an environment variable):
+
+```bash
+rabbitpulse config email_user "you@gmail.com"
+rabbitpulse config email_enabled true
+```
+
+Then set `RABBITPULSE_EMAIL_PASSWORD` in your environment before starting RabbitPulse (or change `email_password_env` / `email_imap_host` for another mail provider).
 
 ---
 
-## Running Tests
-
-RabbitPulse has zero heavy dependencies and runs on Python's built-in standard library:
+## Tests
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests -v
 ```
 
 ---
 
 ## License
 
-MIT License. Free to use and customize.
+MIT

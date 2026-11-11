@@ -20,5 +20,21 @@ class TestNotifier(unittest.TestCase):
         notifier.send_webhook("https://discord.com/api/webhooks/123/xyz", "Test Title", "Test Message")
         self.assertTrue(mock_urlopen.called)
 
+    @patch("urllib.request.urlopen")
+    def test_send_webhook_rejects_invalid_scheme(self, mock_urlopen):
+        notifier.send_webhook("file:///etc/passwd", "Test", "Blocked")
+        self.assertFalse(mock_urlopen.called)
+
+    @patch("subprocess.Popen")
+    def test_notify_macos_escapes_quotes(self, mock_popen):
+        with patch.object(notifier.sys, "platform", "darwin"):
+            notifier.notify_desktop('Title "1"', 'Body "2"')
+            self.assertTrue(mock_popen.called)
+            cmd = mock_popen.call_args[0][0]
+            self.assertEqual(cmd[0], "osascript")
+            self.assertIn('\\"1\\"', cmd[2])
+            self.assertIn('\\"2\\"', cmd[2])
+
 if __name__ == "__main__":
     unittest.main()
+

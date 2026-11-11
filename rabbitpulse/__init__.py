@@ -16,6 +16,7 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "ATP0925"
 __license__ = "MIT"
+

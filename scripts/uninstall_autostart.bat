@@ -1,10 +1,10 @@
 @echo off
-set VBS_TARGET=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\RabbitPulse.vbs
-
-if exist "%VBS_TARGET%" (
-    del "%VBS_TARGET%"
-    echo RabbitPulse startup entry removed.
+echo Removing RabbitPulse Windows startup launcher...
+where rabbitpulse >nul 2>nul
+if %errorlevel%==0 (
+    rabbitpulse autostart remove
 ) else (
-    echo No startup entry found.
+    python -m rabbitpulse.cli autostart remove
 )
-pause
+if "%~1"=="" pause
+
